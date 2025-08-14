@@ -1,0 +1,469 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa de Empresas de Mídia em Londres</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        html, body, #map {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        .leaflet-control-custom {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 12px 16px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            display: flex;
+            align-items: center;
+            border: 1px solid #ddd;
+        }
+        .leaflet-control-custom input[type="checkbox"] {
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #555;
+            border-radius: 3px;
+            cursor: pointer;
+            position: relative;
+            margin-right: 8px;
+        }
+        .leaflet-control-custom input[type="checkbox"]:checked {
+            background: #4CAF50;
+            border-color: #4CAF50;
+        }
+        .leaflet-control-custom input[type="checkbox"]:checked::after {
+            content: '✔';
+            color: white;
+            font-size: 12px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .leaflet-control-custom label {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 14px;
+            color: #333;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+        .leaflet-control-custom label:hover {
+            color: #0078d4;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Inicializar o mapa centrado em Londres
+        var map = L.map('map').setView([51.509865, -0.118092], 12);
+
+        // Adicionar camada de mapa CartoDB Positron (estilo simples)
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        // Definir ícone laranja personalizado para Globo Londres
+        var orangeIcon = L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+            shadowSize: [41, 41]
+        });
+
+        // Definir ícone verde personalizado para Disponível e outros endereços disponíveis
+        var greenIcon = L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+            shadowSize: [41, 41]
+        });
+
+        // Definir ícone amarelo personalizado para ITN, ITV (Holborn) e Evening Standard (Alphabeta)
+        var yellowIcon = L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+            shadowSize: [41, 41]
+        });
+
+        // Definir ícone vermelho personalizado para Sky UK, Evening Standard (dmg media), ITV (White City), BBC Studios, Reuters e Here East
+        var redIcon = L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+            shadowSize: [41, 41]
+        });
+
+        // Criar layer group para marcadores Disponível
+        var disponivelLayer = L.layerGroup();
+
+        // Lista de empresas com coordenadas (obtidas aproximadamente via geocodificação)
+        var companies = [
+            {
+                name: "The Guardian",
+                address: "Kings Place, 90 York Way, London, N1 9GU",
+                lat: 51.5348,
+                lng: -0.1238
+            },
+            {
+                name: "The Times (News UK)",
+                address: "The News Building, 1 London Bridge Street, London, SE1 9GF",
+                lat: 51.5050,
+                lng: -0.0870,
+                popup: '<b>The Times (News UK)</b><br>The News Building, 1 London Bridge Street, London, SE1 9GF<br><a href="https://thenewsbuilding.co.uk/" target="_blank">Property Details</a>'
+            },
+            {
+                name: "Daily Mail (dmg media)",
+                address: "Northcliffe House, 9 Derry Street, Kensington, London, W8 5HY",
+                lat: 51.4990,
+                lng: -0.1926
+            },
+            {
+                name: "The Daily Telegraph",
+                address: "111 Buckingham Palace Road, Victoria, London, SW1W 0DT",
+                lat: 51.4946,
+                lng: -0.1462,
+                popup: '<b>The Daily Telegraph</b><br>111 Buckingham Palace Road, Victoria, London, SW1W 0DT<br><a href="https://111buckinghampalaceroad.co.uk/" target="_blank">Property Details</a>'
+            },
+            {
+                name: "Financial Times",
+                address: "Bracken House, 1 Friday Street, London, EC4M 9BT",
+                lat: 51.5132,
+                lng: -0.0960
+            },
+            {
+                name: "BBC Broadcasting House",
+                address: "Broadcasting House, Portland Place, London, W1A 1AA",
+                lat: 51.5186,
+                lng: -0.1443
+            },
+            {
+                name: "Evening Standard (dmg media)",
+                address: "2 Derry Street, Kensington, London, W8 5EE",
+                lat: 51.4990,
+                lng: -0.1926,
+                icon: redIcon
+            },
+            {
+                name: "Global (Capital, Heart, LBC)",
+                address: "30 Leicester Square, London, WC2H 7LA",
+                lat: 51.5104,
+                lng: -0.1296
+            },
+            {
+                name: "ITV (Holborn)",
+                address: "2 Waterhouse Square, 140 Holborn, London, EC1N 2AE",
+                lat: 51.5180,
+                lng: -0.1120,
+                icon: yellowIcon
+            },
+            {
+                name: "RELX",
+                address: "1-3 Strand, London, WC2N 5JR",
+                lat: 51.5108,
+                lng: -0.1223,
+                popup: '<b>RELX</b><br>1-3 Strand, London, WC2N 5JR<br><a href="https://www.ashwell.london/1-3strand" target="_blank">Property Details</a>'
+            },
+            {
+                name: "ITV (White City)",
+                address: "201 Wood Ln, London, W12 7TQ",
+                lat: 51.5097,
+                lng: -0.2265,
+                icon: redIcon
+            },
+            {
+                name: "Sky UK",
+                address: "Grant Way, Isleworth, TW7 5QD",
+                lat: 51.4870,
+                lng: -0.3238,
+                icon: redIcon
+            },
+            {
+                name: "Bauer Media",
+                address: "The Lantern, 75 Hampstead Rd, London, NW1 2PL",
+                lat: 51.5297,
+                lng: -0.1387,
+                popup: '<b>Bauer Media</b><br>The Lantern, 75 Hampstead Rd, London, NW1 2PL<br><a href="https://cushwakeproperty.co.uk/our-property/propertydetails/available/london/offices/75-hampstead-road/210sg400/220795" target="_blank">Property Details</a>'
+            },
+            {
+                name: "Reuters (Thomson Reuters)",
+                address: "5 Canada Square, Canary Wharf, London, E14 5AQ",
+                lat: 51.5050,
+                lng: -0.0150,
+                icon: redIcon
+            },
+            {
+                name: "WPP",
+                address: "Sea Containers House, 18 Upper Ground, London, SE1 9GL",
+                lat: 51.5080,
+                lng: -0.1070
+            },
+            {
+                name: "PHD Media",
+                address: "Bankside 2, 90-100 Southwark St, London, SE1 0SW",
+                lat: 51.5055,
+                lng: -0.1005
+            },
+            {
+                name: "Havas",
+                address: "3 Pancras Sq, London, N1C 4AG",
+                lat: 51.5335,
+                lng: -0.1257,
+                popup: '<b>Havas</b><br>3 Pancras Sq, London, N1C 4AG<br><a href="https://s3-eu-west-1.amazonaws.com/agents-society-assets-files/e1f989ee2f7313ed6747592b2a7faeb5-3-pancras-square-brochure-2025-4n.pdf" target="_blank">Property Details</a>'
+            },
+            {
+                name: "Globo Londres",
+                address: "The Interchange, Camden Lock, Oval Road, London, NW1 7DZ",
+                lat: 51.5389,
+                lng: -0.1456,
+                icon: orangeIcon
+            },
+            {
+                name: "BBC Studios - Television Centre",
+                address: "1 Television Centre, 101 Wood Lane, London, W12 7FA",
+                lat: 51.5100,
+                lng: -0.2260,
+                icon: redIcon
+            },
+            {
+                name: "Evening Standard",
+                address: "Alphabeta, 14-18 Finsbury Square, London, EC2A 1AH",
+                lat: 51.5209,
+                lng: -0.0870,
+                icon: yellowIcon,
+                popup: '<b>Evening Standard</b><br>Alphabeta, 14-18 Finsbury Square, London, EC2A 1AH<br><a href="https://www.completeofficesearch.com/office-space/managed-office-space-alphabeta-building-14-18-finsbury-square-london-ec2a-1ah/" target="_blank">Property Details</a>'
+            },
+            {
+                name: "Channel 4",
+                address: "124-126 Horseferry Road, London, SW1P 2TX",
+                lat: 51.4957,
+                lng: -0.1328
+            },
+            {
+                name: "Bloomberg (Europe HQ)",
+                address: "3 Queen Victoria Street, London, EC4N 4TQ",
+                lat: 51.5128,
+                lng: -0.0935
+            },
+            {
+                name: "PA Media",
+                address: "61 Queen Street, London, EC4R 1AE",
+                lat: 51.5125,
+                lng: -0.0920,
+                popup: '<b>PA Media</b><br>61 Queen Street, London, EC4R 1AE<br><a href="https://www.nobleharris.co.uk/properties/61-queen-street" target="_blank">Property Details</a>'
+            },
+            {
+                name: "City A.M.",
+                address: "6th Floor, 107 Cheapside, London, EC2V 6DN",
+                lat: 51.5142,
+                lng: -0.0940,
+                popup: '<b>City A.M.</b><br>6th Floor, 107 Cheapside, London, EC2V 6DN<br><a href="https://www.loopnet.co.uk/Listing/107-Cheapside-London/25428650/" target="_blank">Property Details</a>'
+            },
+            {
+                name: "ITN",
+                address: "200 Gray's Inn Road, London, WC1X 8XZ",
+                lat: 51.5239,
+                lng: -0.1140,
+                icon: yellowIcon,
+                popup: '<b>ITN</b><br>200 Gray\'s Inn Road, London, WC1X 8XZ<br><a href="https://cushwakeproperty.co.uk/our-property/propertydetails/available/london/offices/200-grays-inn-road/232y9e00/243273" target="_blank">Property Details</a>'
+            },
+            {
+                name: "Sky News - Millbank Studio",
+                address: "4 Millbank, London, SW1P 3JA",
+                lat: 51.4923,
+                lng: -0.1290,
+                popup: '<b>Sky News - Millbank Studio</b><br>4 Millbank, London, SW1P 3JA<br><a href="https://www.levyrealestate.co.uk/property/4-millbank-sw1p-3ja-offices-to-let-part-5th-floor-6478-sq-ft" target="_blank">Property Details</a>'
+            },
+            {
+                name: "Here East",
+                address: "Queen Elizabeth Olympic Park, London, E15 2GW",
+                lat: 51.5460,
+                lng: -0.0210,
+                icon: redIcon
+            },
+            {
+                name: "Television Centre (Paramount HQ)",
+                address: "17-29 Hawley Crescent, London, NW1 8TT",
+                lat: 51.5380,
+                lng: -0.1410
+            },
+            {
+                name: "Disponível",
+                address: "50 Southwark Street, London, SE1 1UN",
+                lat: 51.5045,
+                lng: -0.0935,
+                icon: greenIcon,
+                popup: '<b>Disponível</b><br>50 Southwark Street, London, SE1 1UN<br><a href="https://www.nobleharris.co.uk/properties/50-southwark-street-london-se1-1un" target="_blank">Property Details</a>',
+                isDisponivel: true
+            },
+            {
+                name: "Disponível 1",
+                address: "30-32 Grays Inn Road, London, WC1X 8HR",
+                lat: 51.5205,
+                lng: -0.1130,
+                icon: greenIcon,
+                popup: '<b>Disponível 1</b><br>30-32 Grays Inn Road, London, WC1X 8HR<br><a href="https://www.nobleharris.co.uk/properties/30-32-grays-inn-road" target="_blank">Property Details</a>',
+                isDisponivel: true
+            },
+            {
+                name: "Disponível 2",
+                address: "45 Leather Lane, London, EC1N 7TJ",
+                lat: 51.5198,
+                lng: -0.1095,
+                icon: greenIcon,
+                popup: '<b>Disponível 2</b><br>45 Leather Lane, London, EC1N 7TJ<br><a href="https://www.nobleharris.co.uk/properties/45-leather-lane" target="_blank">Property Details</a>',
+                isDisponivel: true
+            },
+            {
+                name: "Disponível 6",
+                address: "22 Charing Cross Road, London, WC2H 0HS",
+                lat: 51.5108,
+                lng: -0.1280,
+                icon: greenIcon,
+                popup: '<b>Disponível 6</b><br>22 Charing Cross Road, London, WC2H 0HS<br><a href="https://www.nobleharris.co.uk/properties/22-charing-cross-road" target="_blank">Property Details</a>',
+                isDisponivel: true
+            },
+            {
+                name: "Disponível 7",
+                address: "21 Grosvenor Gardens, London, SW1W 0BD",
+                lat: 51.4970,
+                lng: -0.1470,
+                icon: greenIcon,
+                popup: '<b>Disponível 7</b><br>21 Grosvenor Gardens, London, SW1W 0BD<br><a href="https://www.nobleharris.co.uk/properties/21-grosvenor-gardens" target="_blank">Property Details</a>',
+                isDisponivel: true
+            },
+            {
+                name: "Disponível 3",
+                address: "140 Old Street, London, EC1V 9BJ",
+                lat: 51.5245,
+                lng: -0.0935,
+                icon: greenIcon,
+                popup: '<b>Disponível 3</b><br>140 Old Street, London, EC1V 9BJ<br><a href="https://farebrother.com/property-view/2338/140-old-street-london-ec1v-9bj/" target="_blank">Property Details</a>',
+                isDisponivel: true
+            },
+            {
+                name: "Disponível 4",
+                address: "233 High Holborn, London, WC1V 7DN",
+                lat: 51.5175,
+                lng: -0.1130,
+                icon: greenIcon,
+                popup: '<b>Disponível 4</b><br>233 High Holborn, London, WC1V 7DN<br><a href="https://farebrother.com/property-view/1962/233-high-holborn-london-wc1v-7dn/" target="_blank">Property Details</a>',
+                isDisponivel: true
+            },
+            {
+                name: "Disponível 5",
+                address: "21 Tabernacle Street, London, EC2A 1AE",
+                lat: 51.5220,
+                lng: -0.0850,
+                icon: greenIcon,
+                popup: '<b>Disponível 5</b><br>21 Tabernacle Street, London, EC2A 1AE<br><a href="https://farebrother.com/property-view/1783/21-tabernacle-street-london-ec2a-4de/" target="_blank">Property Details</a>',
+                isDisponivel: true
+            },
+            {
+                name: "Disponível 8",
+                address: "Brownlow House, 50-51 High Holborn, London, WC1V 6ER",
+                lat: 51.5170,
+                lng: -0.1125,
+                icon: greenIcon,
+                popup: '<b>Disponível 8</b><br>Brownlow House, 50-51 High Holborn, London, WC1V 6ER<br><a href="https://farebrother.com/property-view/152/brownlow-house-50-51-high-holborn-london-wc1v-6er/" target="_blank">Property Details</a>',
+                isDisponivel: true
+            }
+        ];
+
+        // Adicionar marcadores ao mapa, separando Disponível em layer group
+        companies.forEach(function(company) {
+            var markerOptions = company.icon ? { icon: company.icon } : {};
+            var popupContent = company.popup ? company.popup : `<b>${company.name}</b><br>${company.address}`;
+            var marker = L.marker([company.lat, company.lng], markerOptions)
+                .bindPopup(popupContent);
+            if (company.isDisponivel) {
+                disponivelLayer.addLayer(marker);
+            } else {
+                marker.addTo(map);
+            }
+        });
+
+        // Adicionar layer inicial dos Disponível ao mapa
+        disponivelLayer.addTo(map);
+
+        // Criar controle personalizado para o filtro
+        var FilterControl = L.Control.extend({
+            options: {
+                position: 'topright'
+            },
+            onAdd: function(map) {
+                var container = L.DomUtil.create('div', 'leaflet-control-custom');
+                container.innerHTML = '<input type="checkbox" id="disponivelFilter" checked><label for="disponivelFilter">Mostrar Disponível</label>';
+                L.DomEvent.on(container.querySelector('#disponivelFilter'), 'change', function(e) {
+                    if (e.target.checked) {
+                        map.addLayer(disponivelLayer);
+                    } else {
+                        map.removeLayer(disponivelLayer);
+                    }
+                });
+                return container;
+            }
+        });
+
+        // Adicionar o controle ao mapa
+        map.addControl(new FilterControl());
+    </script>
+</body>
+</html>
